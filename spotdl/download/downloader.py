@@ -40,6 +40,7 @@ from spotdl.utils.config import (
 )
 from spotdl.utils.ffmpeg import FFmpegError, async_convert, get_ffmpeg_path
 from spotdl.utils.formatter import create_file_name
+from spotdl.utils.judge import create_judge
 from spotdl.utils.lrc import generate_lrc
 from spotdl.utils.m3u import gen_m3u_files
 from spotdl.utils.metadata import MetadataError, embed_metadata
@@ -211,6 +212,19 @@ class Downloader:
                     yt_dlp_args=self.settings["yt_dlp_args"],
                 )
             )
+
+        # Initialize the optional AI match judge
+        self.judge = create_judge(
+            self.settings["judge"],
+            url=self.settings["judge_url"],
+            model=self.settings["judge_model"],
+            threshold=self.settings["judge_threshold"],
+            judge_all=self.settings["judge_all"],
+            report_path=self.settings["judge_report"]
+            or ("judge_report.csv" if self.settings["judge"] else None),
+        )
+        for provider in self.audio_providers:
+            provider.judge = self.judge
 
         # Initialize list of errors
         self.errors: List[str] = []

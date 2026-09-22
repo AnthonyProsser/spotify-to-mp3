@@ -5,7 +5,7 @@ Base audio provider module.
 import logging
 import re
 import shlex
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from yt_dlp import YoutubeDL
 
@@ -19,6 +19,9 @@ from spotdl.utils.formatter import (
     create_song_title,
 )
 from spotdl.utils.matching import get_best_matches, order_results
+
+if TYPE_CHECKING:
+    from spotdl.utils.judge import MatchJudge
 
 __all__ = ["AudioProviderError", "AudioProvider", "ISRC_REGEX", "YTDLLogger"]
 
@@ -75,6 +78,9 @@ class AudioProvider:
 
     SUPPORTS_ISRC: bool
     GET_RESULTS_OPTS: List[Dict[str, Any]]
+
+    # Optional AI judge that makes the final pick, set by the Downloader
+    judge: Optional["MatchJudge"] = None
 
     def __init__(
         self,
@@ -177,6 +183,9 @@ class AudioProvider:
 
         logger.debug("[%s] Searching for %s", song.song_id, search_query)
 
+        # With --judge-all, skip spotDL's early returns so every song is judged
+        judge_all = self.judge is not None and self.judge.judge_all
+
         isrc_urls: List[str] = []
 
         # search for song using isrc if it's available
@@ -199,7 +208,7 @@ class AudioProvider:
                 song.isrc,
             )
 
-            if len(isrc_results) == 1 and isrc_results[0].verified:
+            if len(isrc_results) == 1 and isrc_results[0].verified and not judge_all:
                 # If we only have one verified result, return it
                 # What's the chance of it being wrong?
                 logger.debug(
@@ -226,7 +235,7 @@ class AudioProvider:
                     len(best_isrc_results),
                 )
 
-                if len(best_isrc_results) > 0:
+                if len(best_isrc_results) > 0 and not judge_all:
                     best_isrc = best_isrc_results[0]
                     if best_isrc[1] > 80.0:
                         logger.debug(
@@ -265,7 +274,7 @@ class AudioProvider:
                 None,
             )
 
-            if isrc_result:
+            if isrc_result and not judge_all:
                 logger.debug(
                     "[%s] Best ISRC result is %s", song.song_id, isrc_result.url
                 )
@@ -299,7 +308,7 @@ class AudioProvider:
                     best_score,
                 )
 
-                if best_score >= 80 and best_result.verified:
+                if best_score >= 80 and best_result.verified and not judge_all:
                     logger.debug(
                         "[%s] Returning verified best result %s with score %s",
                         song.song_id,
@@ -319,6 +328,10 @@ class AudioProvider:
 
         # get the result with highest score
         best_result, best_score = self.get_best_result(results)
+
+        if self.judge is not None:
+            best_result = self.judge.choose(song, results, best_result, best_score)
+
         logger.debug(
             "[%s] Returning best result %s with score %s",
             song.song_id,

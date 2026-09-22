@@ -26,6 +26,49 @@ ______________________________________________________________________
 **[Read the documentation on ReadTheDocs!](https://spotdl.readthedocs.io)**
 ______________________________________________________________________
 
+## About this fork: AI match judge
+
+This is a fork of [spotDL](https://github.com/spotDL/spotify-downloader) (MIT) that adds an optional AI "judge". spotDL ranks YouTube results with fuzzy matching as usual. The judge then looks at the top 5 results and picks the one that is the same recording as the Spotify track, or none of them. It rejects live, cover, remix and sped-up versions unless the Spotify track is that version.
+
+The judge is a "System One" decision model. It returns a choice with a probability instead of generated text:
+
+| `--judge` | Model | Runs | Setup |
+| --- | --- | --- | --- |
+| `jev` | TypeSafe Jev | Cloud | `TYPESAFE_API_KEY` |
+| `jev-cloudflare` | Jev on Cloudflare Workers AI | Cloud | `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN` |
+| `kev` | [Kev](https://github.com/jaredpalmer/kev), an open Jev-style model | Local | Start a Kev server (below) |
+
+Jev costs about $0.042 per million input tokens and output is free, so judging a 1,000-song playlist costs a few cents.
+
+To run Kev locally (it needs Python 3.12+ and `uv`; Kev-0.8B needs about 4 GB of RAM, Kev-4B about 8 GB):
+
+```bash
+git clone https://github.com/jaredpalmer/kev.git && cd kev
+uv sync --extra serve
+uv run --extra serve python -m kev.serve --run jaredpalmer/kev-4b --port 8009
+```
+
+Kev also comes in 0.8B and 9B sizes. See its README for the model names.
+
+Then:
+
+```bash
+spotdl download "https://open.spotify.com/playlist/..." --judge kev
+```
+
+Options:
+
+- `--judge-threshold 0.7`: the minimum probability needed to use the judge's pick. Below it, spotDL's own pick is kept.
+- `--judge-all`: judge every song. By default, songs spotDL is already sure of (ISRC match, or a verified result scoring 80 or more) skip the judge.
+- `--judge-url` / `--judge-model`: point to a different server or model.
+- `--judge-report path.csv`: where the report goes (default `judge_report.csv`). It has one row per judged song: spotDL's pick, the judge's pick and confidence, and the outcome (`agreed`, `overrode`, `low_confidence`, `rejected_all`, `not_original` or `judge_error`).
+
+If the judge can't be reached, spotDL's own pick is used and the song is logged as `judge_error`.
+
+Downloading from YouTube may break YouTube's Terms of Service. Use this for personal use only.
+
+______________________________________________________________________
+
 ## Installation
 
 Refer to our [Installation Guide](docs/installation.md) for more details.

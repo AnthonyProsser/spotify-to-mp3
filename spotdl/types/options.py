@@ -90,6 +90,12 @@ class DownloaderOptions(TypedDict):
     create_skip_file: Optional[bool]
     respect_skip_file: Optional[bool]
     sync_remove_lrc: Optional[bool]
+    judge: Optional[str]
+    judge_url: Optional[str]
+    judge_model: Optional[str]
+    judge_threshold: float
+    judge_all: bool
+    judge_report: Optional[str]
 
 
 class WebOptions(TypedDict):
@@ -184,6 +190,12 @@ class DownloaderOptionalOptions(TypedDict, total=False):
     create_skip_file: Optional[bool]
     respect_skip_file: Optional[bool]
     sync_remove_lrc: Optional[bool]
+    judge: Optional[str]
+    judge_url: Optional[str]
+    judge_model: Optional[str]
+    judge_threshold: float
+    judge_all: bool
+    judge_report: Optional[str]
 
 
 class WebOptionalOptions(TypedDict, total=False):

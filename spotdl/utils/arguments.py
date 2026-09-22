@@ -12,6 +12,7 @@ from spotdl import _version
 from spotdl.download.downloader import AUDIO_PROVIDERS, LYRICS_PROVIDERS
 from spotdl.utils.ffmpeg import FFMPEG_FORMATS
 from spotdl.utils.formatter import VARS
+from spotdl.utils.judge import JUDGE_BACKENDS
 from spotdl.utils.logging import NAME_TO_LEVEL
 
 __all__ = ["OPERATIONS", "SmartFormatter", "parse_arguments"]
@@ -720,6 +721,60 @@ def parse_web_options(parser: _ArgumentGroup):
     )
 
 
+def parse_judge_options(parser: _ArgumentGroup):
+    """
+    Parse AI match judge options from the command line.
+
+    ### Arguments
+    - parser: The argument parser to add the options to.
+    """
+
+    parser.add_argument(
+        "--judge",
+        choices=list(JUDGE_BACKENDS.keys()),
+        help=(
+            "Use a System One model to pick the right search result. "
+            "jev: TypeSafe API (needs TYPESAFE_API_KEY), "
+            "jev-cloudflare: Cloudflare Workers AI (needs CLOUDFLARE_ACCOUNT_ID "
+            "and CLOUDFLARE_API_TOKEN), kev: local Kev server."
+        ),
+    )
+
+    parser.add_argument(
+        "--judge-url",
+        help="Override the judge's API base URL (e.g. a Kev server on another port).",
+    )
+
+    parser.add_argument(
+        "--judge-model",
+        help="Override the judge's model name (e.g. jev-latest, kev-latest).",
+    )
+
+    parser.add_argument(
+        "--judge-threshold",
+        type=float,
+        help=(
+            "Minimum confidence (0-1) for the judge's pick to be used. "
+            "Below it, spotDL's own pick is kept. Default 0.7."
+        ),
+    )
+
+    parser.add_argument(
+        "--judge-all",
+        action="store_const",
+        const=True,
+        help=(
+            "Judge every song. By default songs spotDL is already sure about "
+            "(ISRC or verified matches) skip the judge."
+        ),
+    )
+
+    parser.add_argument(
+        "--judge-report",
+        help="Path of the judge's CSV report. Default: judge_report.csv",
+    )
+
+
 def parse_misc_options(parser: _ArgumentGroup):
     """
     Parse misc options from the command line.
@@ -836,6 +891,10 @@ def create_parser() -> ArgumentParser:
     # Parse web options
     web_options = parser.add_argument_group("Web options")
     parse_web_options(web_options)
+
+    # Parse judge options
+    judge_options = parser.add_argument_group("AI judge options")
+    parse_judge_options(judge_options)
 
     # Parse misc options
     misc_options = parser.add_argument_group("Misc options")

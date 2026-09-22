@@ -368,6 +368,12 @@ DOWNLOADER_OPTIONS: DownloaderOptions = {
     "create_skip_file": False,
     "respect_skip_file": False,
     "sync_remove_lrc": False,
+    "judge": None,
+    "judge_url": None,
+    "judge_model": None,
+    "judge_threshold": 0.7,
+    "judge_all": False,
+    "judge_report": None,
 }
 
 WEB_OPTIONS: WebOptions = {
