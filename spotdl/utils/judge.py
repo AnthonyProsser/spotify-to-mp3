@@ -176,16 +176,32 @@ class MatchJudge:
                 "explicit": song.explicit,
             },
             "candidates": {
-                str(index): {
-                    "title": result.name,
-                    "channel": result.author,
-                    "duration_s": round(result.duration),
-                    "official_audio": result.verified,
-                    "views": result.views,
-                }
+                str(index): MatchJudge.describe_result(result)
                 for index, result in enumerate(candidates)
             },
         }
+
+    @staticmethod
+    def describe_result(result: Result) -> Dict[str, Any]:
+        """
+        Describe a search result for the model, leaving out empty fields.
+        """
+
+        description: Dict[str, Any] = {
+            "title": result.name,
+            "channel": result.author,
+            "duration_s": round(result.duration),
+            "official_audio": result.verified,
+        }
+
+        if result.artists:
+            description["artists"] = list(result.artists)
+        if result.album:
+            description["album"] = result.album
+        if result.views:
+            description["views"] = result.views
+
+        return description
 
     @staticmethod
     def build_questions(candidates: List[Result]) -> Dict[str, Any]:
@@ -203,9 +219,12 @@ class MatchJudge:
                 "type": "choice",
                 "instructions": (
                     "Which candidate is the same recording as the Spotify track? "
-                    "Durations should be close. Live, cover, remix, karaoke, "
-                    "sped up or other versions are wrong unless the Spotify "
-                    "track is that version."
+                    "Titles and artist names can be in any language or script, "
+                    "translated, transliterated or with different accents, so "
+                    "compare meaning, not spelling. Durations should be close. "
+                    "Live (en vivo, ao vivo, en directo), cover, remix, "
+                    "karaoke, sped up or other versions are wrong unless the "
+                    "Spotify track is that version."
                 ),
                 "criteria": criteria,
             },
@@ -251,25 +270,18 @@ class MatchJudge:
             original=float(original) if original is not None else None,
         )
 
-    def choose(
-        self,
-        song: Song,
+    @staticmethod
+    def build_candidates(
         results: Dict[Result, float],
-        spotdl_result: Result,
-        spotdl_score: float,
-    ) -> Result:
+        spotdl_result: Optional[Result],
+        unscored: Optional[List[Result]] = None,
+    ) -> List[Result]:
         """
-        Choose the result to download. Falls back to spotDL's pick when the
-        judge fails, rejects every candidate, or isn't confident enough.
-
-        ### Arguments
-        - song: The Spotify song.
-        - results: All search results with their spotDL match scores.
-        - spotdl_result: The result spotDL would pick on its own.
-        - spotdl_score: spotDL's score for that result.
-
-        ### Returns
-        - The result to download.
+        Build the candidate list: spotDL's scored results first (best score
+        first), then results spotDL filtered out. spotDL's filters drop
+        results whose titles or artists are spelled differently, which is
+        common for songs that aren't in English, so the model gets to see
+        them too.
         """
 
         candidates = [
@@ -278,8 +290,44 @@ class MatchJudge:
         ][:MAX_CANDIDATES]
 
         # Make sure spotDL's own pick (which also weighs views) is a candidate
-        if spotdl_result not in candidates:
+        if spotdl_result is not None and spotdl_result not in candidates:
             candidates[-1] = spotdl_result
+
+        for result in unscored or []:
+            if len(candidates) >= MAX_CANDIDATES:
+                break
+            if result not in candidates and result not in results:
+                candidates.append(result)
+
+        return candidates
+
+    def choose(
+        self,
+        song: Song,
+        results: Dict[Result, float],
+        spotdl_result: Optional[Result],
+        spotdl_score: Optional[float],
+        unscored: Optional[List[Result]] = None,
+    ) -> Optional[Result]:
+        """
+        Choose the result to download. Falls back to spotDL's pick when the
+        judge fails, rejects every candidate, or isn't confident enough.
+
+        ### Arguments
+        - song: The Spotify song.
+        - results: Search results that passed spotDL's filters, with scores.
+        - spotdl_result: The result spotDL would pick on its own, or None if
+            spotDL found no match.
+        - spotdl_score: spotDL's score for that result.
+        - unscored: Search results spotDL filtered out.
+
+        ### Returns
+        - The result to download, or None if there is no match.
+        """
+
+        candidates = self.build_candidates(results, spotdl_result, unscored)
+        if not candidates:
+            return spotdl_result
 
         verdict: Optional[JudgeVerdict] = None
         judge_result: Optional[Result] = None
@@ -306,26 +354,33 @@ class MatchJudge:
                 outcome = "not_original"
             else:
                 final_result = judge_result
-                outcome = "agreed" if judge_result == spotdl_result else "overrode"
+                if spotdl_result is None:
+                    outcome = "rescued"
+                elif judge_result == spotdl_result:
+                    outcome = "agreed"
+                else:
+                    outcome = "overrode"
 
             logger.debug(
                 "[%s] Judge verdict %s (outcome %s)", song.song_id, verdict, outcome
             )
 
-            if outcome not in ("agreed", "overrode"):
+            if outcome not in ("agreed", "overrode", "rescued"):
                 logger.info(
                     "Judge is unsure about %s (%s), using spotDL's pick %s",
                     song.display_name,
                     outcome,
-                    spotdl_result.url,
+                    spotdl_result.url if spotdl_result else None,
                 )
 
         self.write_report(
             {
                 "song": song.display_name,
                 "spotify_url": song.url,
-                "spotdl_url": spotdl_result.url,
-                "spotdl_score": round(spotdl_score, 2),
+                "spotdl_url": spotdl_result.url if spotdl_result else "",
+                "spotdl_score": (
+                    round(spotdl_score, 2) if spotdl_score is not None else ""
+                ),
                 "judge_url": judge_result.url if judge_result else "",
                 "judge_choice": verdict.choice if verdict else "",
                 "judge_confidence": round(verdict.confidence, 3) if verdict else "",
@@ -334,7 +389,7 @@ class MatchJudge:
                     if verdict and verdict.original is not None
                     else ""
                 ),
-                "final_url": final_result.url,
+                "final_url": final_result.url if final_result else "",
                 "outcome": outcome,
             }
         )

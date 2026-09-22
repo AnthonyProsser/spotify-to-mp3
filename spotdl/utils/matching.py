@@ -19,6 +19,7 @@ from spotdl.utils.logging import MATCH
 
 __all__ = [
     "FORBIDDEN_WORDS",
+    "FORBIDDEN_PHRASES",
     "fill_string",
     "create_clean_string",
     "sort_string",
@@ -54,6 +55,23 @@ FORBIDDEN_WORDS = [
     "slowed",
     "instrumental",
     "cover",
+    "karaoke",
+    "nightcore",
+]
+
+# Words for other versions in other languages, matched as whole words
+# because they are short enough to appear inside unrelated titles
+FORBIDDEN_PHRASES = [
+    "en-vivo",  # es
+    "en-directo",  # es
+    "en-direct",  # fr
+    "ao-vivo",  # pt
+    "dal-vivo",  # it
+    "acustico",  # es, pt, it
+    "acustica",  # es, pt, it
+    "acoustique",  # fr
+    "sped-up",
+    "en-concierto",  # es
 ]
 
 
@@ -217,6 +235,12 @@ def check_forbidden_words(song: Song, result: Result) -> Tuple[bool, List[str]]:
     for word in FORBIDDEN_WORDS:
         if word in to_check and word not in song_name:
             words.append(word)
+
+    song_words = f"-{slugify(song.name)}-"
+    result_words = f"-{slugify(result.name)}-"
+    for phrase in FORBIDDEN_PHRASES:
+        if f"-{phrase}-" in result_words and f"-{phrase}-" not in song_words:
+            words.append(phrase)
 
     return len(words) > 0, words
 

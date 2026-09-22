@@ -248,6 +248,10 @@ class AudioProvider:
                         return best_isrc[0].url
 
         results: Dict[Result, float] = {}
+
+        # Every search result, in search order, for the judge to consider
+        # even when spotDL's filters drop it
+        all_results: List[Result] = []
         for options in self.GET_RESULTS_OPTS:
             # Query YTM by songs only first, this way if we get correct result on the first try
             # we don't have to make another request
@@ -257,6 +261,8 @@ class AudioProvider:
                 search_results = [
                     result for result in search_results if result.verified
                 ]
+
+            all_results.extend(search_results)
 
             logger.debug(
                 "[%s] Found %s results for search query %s with options %s",
@@ -321,16 +327,28 @@ class AudioProvider:
                 # Update final results with new results
                 results.update(new_results)
 
-        # No matches found
+        # No matches found, the judge may still find one among the results
+        # spotDL filtered out (e.g. titles in another language or script)
         if not results:
-            logger.debug("[%s] No results found", song.song_id)
-            return None
+            rescued = None
+            if self.judge is not None and all_results:
+                rescued = self.judge.choose(song, {}, None, None, all_results)
+
+            if rescued is None:
+                logger.debug("[%s] No results found", song.song_id)
+                return None
+
+            logger.debug("[%s] Judge rescued %s", song.song_id, rescued.url)
+            return rescued.url
 
         # get the result with highest score
         best_result, best_score = self.get_best_result(results)
 
         if self.judge is not None:
-            best_result = self.judge.choose(song, results, best_result, best_score)
+            best_result = (
+                self.judge.choose(song, results, best_result, best_score, all_results)
+                or best_result
+            )
 
         logger.debug(
             "[%s] Returning best result %s with score %s",

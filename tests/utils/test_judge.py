@@ -240,3 +240,82 @@ def test_search_confident_match_skips_judge(provider):
 
     assert provider.search(SONG) == spotdl_pick.url
     assert not client.calls
+
+
+def test_unscored_results_become_candidates():
+    dropped = make_result("dropped", "Dropped by spotDL", 244)
+    client = FakeClient(answers("3", 0.9))
+
+    chosen = MatchJudge(client).choose(SONG, RESULTS, LIVE, 90.0, [STUDIO, dropped])
+
+    state, _ = client.calls[0]
+    assert [c["title"] for c in state["candidates"].values()] == [
+        LIVE.name,
+        STUDIO.name,
+        COVER.name,
+        dropped.name,
+    ]
+    assert chosen == dropped
+
+
+SPANISH_SONG = Song.from_dict(
+    {
+        **SONG.json,
+        "name": "Tití Me Preguntó",
+        "artists": ["Bad Bunny"],
+        "artist": "Bad Bunny",
+        "album_name": "Un Verano Sin Ti",
+        "duration": 243,
+    }
+)
+
+# The official upload's title and artist differ from Spotify's metadata, so
+# spotDL's filters drop it
+SPANISH_OFFICIAL = Result(
+    source="YouTubeMusic",
+    url="https://music.youtube.com/watch?v=official",
+    verified=True,
+    name="Titi Me Pregunto (Video Oficial)",
+    duration=243,
+    author="Benito Antonio Martínez Ocasio",
+    result_id="official",
+    artists=("Benito Antonio Martínez Ocasio",),
+)
+SPANISH_LIVE = make_result("vivo", "Tití Me Preguntó (En Vivo)", 280)
+
+
+class SpanishProvider(AudioProvider):
+    SUPPORTS_ISRC = False
+    GET_RESULTS_OPTS = [{}]
+
+    def get_results(self, search_term, **kwargs):
+        return [SPANISH_LIVE, SPANISH_OFFICIAL]
+
+
+@pytest.fixture
+def spanish_provider(monkeypatch):
+    # spotDL's filters drop every result
+    monkeypatch.setattr(audio_base, "order_results", lambda results, song, query: {})
+    return SpanishProvider()
+
+
+def test_judge_rescues_song_spotdl_filtered_out(spanish_provider):
+    assert spanish_provider.search(SPANISH_SONG) is None
+
+    client = FakeClient(answers("1", 0.9))
+    spanish_provider.judge = MatchJudge(client)
+
+    assert spanish_provider.search(SPANISH_SONG) == SPANISH_OFFICIAL.url
+    state, _ = client.calls[0]
+    assert state["spotify_track"]["title"] == "Tití Me Preguntó"
+    assert state["candidates"]["1"]["artists"] == ["Benito Antonio Martínez Ocasio"]
+
+
+@pytest.mark.parametrize(
+    "fake_answers",
+    [answers("none", 0.9), answers("1", 0.4), answers("0", 0.9, original=0.1)],
+)
+def test_no_rescue_when_judge_unsure(spanish_provider, fake_answers):
+    spanish_provider.judge = MatchJudge(FakeClient(fake_answers))
+
+    assert spanish_provider.search(SPANISH_SONG) is None

@@ -61,9 +61,29 @@ Options:
 - `--judge-threshold 0.7`: the minimum probability needed to use the judge's pick. Below it, spotDL's own pick is kept.
 - `--judge-all`: judge every song. By default, songs spotDL is already sure of (ISRC match, or a verified result scoring 80 or more) skip the judge.
 - `--judge-url` / `--judge-model`: point to a different server or model.
-- `--judge-report path.csv`: where the report goes (default `judge_report.csv`). It has one row per judged song: spotDL's pick, the judge's pick and confidence, and the outcome (`agreed`, `overrode`, `low_confidence`, `rejected_all`, `not_original` or `judge_error`).
+- `--judge-report path.csv`: where the report goes (default `judge_report.csv`). It has one row per judged song: spotDL's pick, the judge's pick and confidence, and the outcome (`agreed`, `overrode`, `rescued`, `low_confidence`, `rejected_all`, `not_original` or `judge_error`).
 
 If the judge can't be reached, spotDL's own pick is used and the song is logged as `judge_error`.
+
+### Songs in other languages
+
+spotDL's fuzzy matching drops results whose title or artist is spelled differently from Spotify's. This is common for songs not in English: a different transliteration, accents, the artist's legal name, or a translated title. When the judge is on:
+
+- Results spotDL filtered out still reach the judge as candidates.
+- If spotDL finds no match at all, the judge can still pick one (`rescued` in the report). If it isn't confident, the song is skipped as before.
+- The judge is told that titles and artists may be in any language or script, and that "en vivo", "ao vivo" and "en directo" mean live.
+
+spotDL's own scoring also penalises "live", "acoustic" and "sped up" versions in Spanish, Portuguese, French and Italian now, not just in English.
+
+Kev was trained mostly on English data, so check its picks on other languages with the benchmark below before trusting it.
+
+### Benchmark
+
+`scripts/judge_benchmark.py` searches every song in one or more playlists twice, once with spotDL alone and once with the judge on every song. It doesn't download anything. It writes both picks side by side to a CSV, so you can mark which one is right:
+
+```bash
+uv run python scripts/judge_benchmark.py <playlist-url> [<playlist-url> ...] --judge kev --out benchmark.csv
+```
 
 Downloading from YouTube may break YouTube's Terms of Service. Use this for personal use only.
 
