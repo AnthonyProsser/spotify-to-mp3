@@ -3,6 +3,7 @@ Module for all things matching related
 """
 
 import logging
+from dataclasses import replace
 from itertools import product, zip_longest
 from math import exp
 from typing import Dict, List, Optional, Tuple
@@ -16,6 +17,12 @@ from spotdl.utils.formatter import (
     slugify,
 )
 from spotdl.utils.logging import MATCH
+from spotdl.utils.versions import (
+    check_version_words,
+    strip_album_edition,
+    strip_credits,
+    strip_remaster_suffix,
+)
 
 __all__ = [
     "FORBIDDEN_WORDS",
@@ -26,6 +33,9 @@ __all__ = [
     "based_sort",
     "check_common_word",
     "check_forbidden_words",
+    "check_version_words",
+    "strip_remaster_suffix",
+    "strip_credits",
     "create_match_strings",
     "get_best_matches",
     "calc_main_artist_match",
@@ -57,6 +67,10 @@ FORBIDDEN_WORDS = [
     "cover",
     "karaoke",
     "nightcore",
+    "isolated",
+    "backingtrack",
+    "drumless",
+    "multitrack",
 ]
 
 # Words for other versions in other languages, matched as whole words
@@ -351,10 +365,19 @@ def calc_main_artist_match(song: Song, result: Result) -> float:
             if artist in res_main_artist:
                 main_artist_match += 100 / len(song.artists)
 
-        return main_artist_match
+        # YouTube Music often lists only the main artist and names the
+        # featured artists in the title, e.g. "Under Pressure (feat. David
+        # Bowie)" by Queen, so the main artists alone can match
+        return max(
+            main_artist_match, ratio(slug_song_main_artist, slug_result_main_artist)
+        )
 
-    # Match main result artist with main song artist
-    main_artist_match = ratio(slug_song_main_artist, slug_result_main_artist)
+    # Match the main song artist with the result's artists; sorting can put
+    # a featured artist first ("Peso Pluma" before "Eslabon Armado")
+    main_artist_match = max(
+        ratio(slug_song_main_artist, result_artist)
+        for result_artist in sorted_result_artists
+    )
 
     debug(
         song.song_id, result.result_id, f"First main artist match: {main_artist_match}"
@@ -403,9 +426,15 @@ def calc_artists_match(song: Song, result: Result) -> float:
     # Remove main artist from the lists
     artist1_list, artist2_list = artist1_list[1:], artist2_list[1:]
 
+    # Featured artists are often only named in the title, e.g.
+    # "Under Pressure (feat. David Bowie)"
+    result_name = slugify(result.name).replace("-", "")
+
     artists_match = 0.0
     for artist1, artist2 in zip_longest(artist1_list, artist2_list):
         artist12_match = ratio(artist1, artist2)
+        if artist1 and artist1.replace("-", "") in result_name:
+            artist12_match = 100.0
         artists_match += artist12_match
 
     artist_match_number = artists_match / len(artist1_list)
@@ -633,6 +662,31 @@ def calc_name_match(
 
         name_match = max(name_match, second_name_match)
 
+    # Artist credits in brackets, e.g. "Ella Baila Sola (Peso Pluma)" or
+    # "Bailar (mit Pitbull & Elvis Crespo)", aren't part of the name
+    credit_free_name = strip_credits(song, result.name)
+    if credit_free_name != result.name and credit_free_name:
+        credit_free_match = calc_name_match(
+            song, replace(result, name=credit_free_name), search_query
+        )
+        debug(
+            song.song_id,
+            result.result_id,
+            f"Name match without credits: {credit_free_match}",
+        )
+        name_match = max(name_match, credit_free_match)
+
+    # YouTube Music names remastered tracks without Spotify's remaster note
+    # ("Killer Queen" for "Killer Queen - Remastered 2011"); other versions
+    # stay protected by the forbidden and version word checks
+    stripped_name = strip_remaster_suffix(song.name)
+    if stripped_name != song.name:
+        stripped_match = calc_name_match(
+            replace(song, name=stripped_name), result, search_query
+        )
+        debug(song.song_id, result.result_id, f"Stripped name match: {stripped_match}")
+        name_match = max(name_match, stripped_match)
+
     return name_match
 
 
@@ -668,7 +722,15 @@ def calc_album_match(song: Song, result: Result) -> float:
     if not result.album or not song.album_name:
         return 0.0
 
-    return ratio(slugify(song.album_name), slugify(result.album))
+    # Compare without edition notes too, so "Jazz" matches
+    # "Jazz (Deluxe Edition)"
+    return max(
+        ratio(slugify(song.album_name), slugify(result.album)),
+        ratio(
+            slugify(strip_album_edition(song.album_name)),
+            slugify(strip_album_edition(result.album)),
+        ),
+    )
 
 
 def order_results(
@@ -762,6 +824,15 @@ def order_results(
             for _ in found_fwords:
                 name_match -= 15
 
+        # Check if the result's brackets name another version; this weighs
+        # more than a forbidden word so that an official upload of another
+        # version (e.g. another language) can't pass as a sure match
+        version_words = check_version_words(song, result)
+        for _ in version_words:
+            name_match -= 20
+
+        debug(song.song_id, result.result_id, f"Version words: {version_words}")
+
         debug(
             song.song_id,
             result.result_id,
@@ -799,11 +870,15 @@ def order_results(
         average_match = (artists_match + name_match) / 2
         debug(song.song_id, result.result_id, f"Average match: {average_match}")
 
+        # Spotify often lists a compilation, single or remaster where YouTube
+        # Music lists the original album, so only a result that also differs
+        # in length is penalised for its album
         if (
             result.verified
             and not result.isrc_search
             and result.album
             and album_match <= 80
+            and abs(song.duration - result.duration) > 2
         ):
             # we are almost certain that this is the correct result
             # so we add the album match to the average match
@@ -860,6 +935,17 @@ def order_results(
                 )
 
                 average_match -= 5
+        elif not result.isrc_search:
+            # Keep the length in the score of a close match, so that a music
+            # video with an intro doesn't tie with the audio and win on views;
+            # a gap of up to 2 s is normal between uploads of one recording
+            time_gap = abs(song.duration - result.duration)
+            average_match -= 3 * max(0.0, time_gap - 2)
+            debug(
+                song.song_id,
+                result.result_id,
+                f"Average match /w time penalty: {average_match}",
+            )
 
         average_match = min(average_match, 100)
         debug(song.song_id, result.result_id, f"Final average match: {average_match}")

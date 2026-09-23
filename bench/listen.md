@@ -168,3 +168,13 @@ Each entry below is a pick labelled **unsure** in the baseline (`bench/labels/la
 - Why unsure: fan upload, 9 s longer
 - Your answer (pick correct? yes / no):
 
+
+## Candidate 1 (experiment 1 in EXPERIMENTS.md)
+
+### NATTI NATASHA - Criminal
+
+- Spotify: https://open.spotify.com/track/4nt5qwSYkN4d3v57v4bB72 (3:52, album: Criminal)
+- spotDL's pick: https://www.youtube.com/watch?v=W5gYe9qXDgk — "NATTI NATASHA, Ozuna - Criminal (Letra)" (Alligator Lyrics), 3:56, video
+- Alternative: https://www.youtube.com/watch?v=-4jXSlg5n7Y — "Natti Natasha ❌ Ozuna - Criminal (Letra)" (Latino Trap Bangers), 3:52, video
+- Why unsure: lyrics upload 4 s longer than Spotify; the official audio on YouTube Music is 4:34
+- Your answer (pick correct? yes / no):

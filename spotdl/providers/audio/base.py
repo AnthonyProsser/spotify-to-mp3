@@ -432,10 +432,13 @@ class AudioProvider:
                 views_score = (
                     (result_views - lowest_views) / (highest_views - lowest_views)
                 ) * 15
-                weighted_results.append((result, min(score + views_score, 100)))
+                weighted_results.append((result, score + views_score))
 
-            # Now we return the result with the highest score
-            return max(weighted_results, key=lambda x: x[1])
+            # Now we return the result with the highest score; compare
+            # before capping at 100, so the cap doesn't turn a better
+            # match into a tie decided by list order
+            best, best_score = max(weighted_results, key=lambda x: x[1])
+            return best, min(best_score, 100)
 
         return best_result[0], best_result[1]
 

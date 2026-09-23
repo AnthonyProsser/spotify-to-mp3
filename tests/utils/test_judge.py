@@ -343,6 +343,18 @@ def test_best_result_skips_unavailable_video(monkeypatch):
     assert best.result_id not in ("gone", "studio")
 
 
+def test_best_result_compares_before_capping():
+    # "b" and "a" both pass 100 once views are added; the cap used to make
+    # them tie, and the tie went to the first in score order ("a")
+    provider = FakeProvider()
+    a = Result(**{**STUDIO.json, "result_id": "a", "url": "a", "views": 800})
+    b = Result(**{**LIVE.json, "result_id": "b", "url": "b", "views": 1000})
+    c = Result(**{**COVER.json, "result_id": "c", "url": "c", "views": 10})
+
+    best, score = provider.get_best_result({a: 97.0, b: 96.0, c: 90.0})
+    assert (best.result_id, score) == ("b", 100)
+
+
 def test_best_result_with_equal_views_is_top_score():
     provider = FakeProvider()
     results = {Result(**{**r.json, "views": 100}): s for r, s in RESULTS.items()}

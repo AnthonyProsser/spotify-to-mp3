@@ -75,3 +75,66 @@ If every unsure pick turns out correct, the error rates are 3.9% (Spanish),
   Server process RAM peak 3.7 GB.
 - 8-bit weights can shift probabilities slightly from the published fp32
   numbers. Check before trusting thresholds tuned elsewhere.
+
+## 1. Matching fixes: artists, remaster notes, album editions, versions, length (2026-09-22)
+
+Code changes (`spotdl/utils/matching.py`, `spotdl/utils/versions.py`,
+`spotdl/providers/audio/base.py`), each with unit tests:
+
+1. Main artist: compare Spotify's main artist with every result artist.
+   Before, it was compared only with the result artist that sorted first,
+   so "Eslabon Armado" was checked against "Peso Pluma". When the result
+   has one artist and the song several, the main artist alone can match.
+   YouTube Music lists "Under Pressure (feat. David Bowie)" by Queen only,
+   which used to score 0.
+2. Featured artists named in the result's title count as matched.
+3. Name match ignores Spotify's remaster note ("Killer Queen - Remastered
+   2011" vs "Killer Queen"; the official audio used to fail the 60% name
+   cutoff) and artist-only credits in the result's brackets ("Ella Baila
+   Sola (Peso Pluma)", "Bailar (mit Pitbull & Elvis Crespo)").
+4. New version check: words in a result's brackets that aren't in the song
+   name, the artists or a neutral list (official, video, lyrics, ...) cost
+   20 points. It catches "(This Time for Africa)", "(Rah Mix)" and "(2004
+   Remaster)" vs a 2015 remaster. Stems ("isolated", "drumless", "backing
+   track", "multitrack") are now forbidden words.
+5. Album match ignores edition notes ("Jazz" = "Jazz (Deluxe Edition)"),
+   and the album penalty applies only when the length also differs by more
+   than 2 s. Spotify lists compilations, singles and remasters where
+   YouTube Music lists the original album. That used to push official audio
+   below music videos, which have no album.
+6. A close match (score > 85) now keeps its length in the score: 3 points
+   per second beyond 2 s. Before, a music video with an intro tied the audio
+   at 100 and won on views.
+7. `get_best_result` compares scores plus the view bonus before capping at
+   100. The cap used to make ties that list order decided.
+
+The Waka Waka regression from the first album-penalty attempt doesn't come
+back: the English version fails the version check.
+
+| Playlist | Correct | Wrong | Unsure | Unmatched | Errors | Error rate | Baseline |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Spanish | 50 | 0 | 1 | 0 | 1 | 2.0% | 9.8% |
+| English | 173 | 1 | 0 | 0 | 1 | 0.6% | 9.2% |
+| Friend's picks (held out, one check) | 143 | 1 | 0 | 0 | 1 | 0.7% | 2.8% |
+
+- Picks changed from the baseline: 12 Spanish, 44 English, 20 held out.
+  Music-video or fan-upload picks: 11 -> 3, 32 -> 10, 22 -> 8.
+- Judge: off; no overrides, no latency. Picks are in
+  `bench/cand1_*_picks.jsonl`. `bench/tools/evaluate.py` rescores them from
+  the cache and `bench/labels/picks.tsv` (labels keyed by Spotify track and
+  YouTube URL; new picks labelled with the baseline rules).
+- Remaining errors:
+  - Criminal (Spanish, unsure): YouTube Music's official audio is 4:34 against
+    Spotify's 3:52, so only uploads are left. The pick is a lyrics upload 4 s
+    longer; uploads with the exact length have fewer views.
+  - Whole Lotta Love (English, wrong): Spotify's 369 s track from "The Lost
+    Sessions" has no studio match. The pick is the Royal Albert Hall live
+    video, whose YouTube Music title has no "live" in it.
+  - Northern Attitude (held out, wrong, new): the pick is the version with
+    Hozier; Spotify's track is Noah Kahan alone. Fix 1 no longer penalises
+    result artists missing from the song. Not fixed here, because it was
+    found on the held-out list. Next idea: penalise verified results
+    crediting artists the song doesn't have, then test it on Spanish and
+    English first.
+- Held-out check: 0.7% vs 2.0% and 0.6% on the tuning lists, so no sign of
+  overfitting.
