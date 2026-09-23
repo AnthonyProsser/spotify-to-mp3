@@ -157,12 +157,100 @@ def _init_official_spotify_client(**kwargs) -> _OfficialSpotifyClient:
     return _OfficialSpotifyClient.init(**kwargs)
 
 
+# Spotify's release types as the Web API reports them (EPs are singles there)
+FREE_ALBUM_TYPES = {
+    "ALBUM": "album",
+    "SINGLE": "single",
+    "EP": "single",
+    "COMPILATION": "compilation",
+}
+
+# Sections of Spotify's desktop search response for each search type
+FREE_SEARCH_SECTIONS = {
+    "artist": "artists",
+    "album": "albumsV2",
+    "playlist": "playlists",
+}
+
+
+def format_free_search_results(
+    response: Dict[str, Any], search_type: str
+) -> Dict[str, Any]:
+    """
+    Convert a Spotify desktop search response to the Web API's search format
+    for artists, albums or playlists.
+
+    ### Arguments
+    - response: the raw `searchDesktop` response
+    - search_type: "artist", "album" or "playlist"
+
+    ### Returns
+    - `{"<type>s": {"items": [{"name", "id", "uri", "type"}, ...]}}`
+    """
+
+    section = FREE_SEARCH_SECTIONS[search_type]
+    search = (response.get("data") or {}).get("searchV2") or {}
+    wrappers = (search.get(section) or {}).get("items") or []
+
+    items = []
+    for wrapper in wrappers:
+        data = (wrapper or {}).get("data") or {}
+        uri = data.get("uri") or ""
+        name = data.get("name") or (data.get("profile") or {}).get("name")
+        if not uri.startswith(f"spotify:{search_type}:") or not name:
+            continue
+
+        items.append(
+            {
+                "name": name,
+                "id": uri.rsplit(":", 1)[-1],
+                "uri": uri,
+                "type": search_type,
+            }
+        )
+
+    return {f"{search_type}s": {"items": items}}
+
+
+class _FreeSpotifyClient(FreeSpotify):
+    """
+    SpotipyFree client that can also search artists, albums and playlists;
+    SpotipyFree's own search only returns tracks.
+    """
+
+    # pylint: disable=redefined-builtin, keyword-arg-before-vararg
+    def search(self, q, limit=10, offset=0, type="track", *args, **kwargs):
+        if type not in FREE_SEARCH_SECTIONS:
+            return super().search(q, type, *args, **kwargs)
+
+        # The desktop search has no field filters like "artist: gorillaz"
+        query = q.split(":", 1)[1].strip() if q.startswith(f"{type}:") else q
+
+        # pylint: disable=import-outside-toplevel
+        from spotapi import Song as SpotapiSong
+
+        response = SpotapiSong().query_songs(query, limit=limit, offset=offset)
+
+        return format_free_search_results(response, type)
+
+    def album(self, album_id, *args, **kwargs):
+        album = super().album(album_id, *args, **kwargs)
+
+        # SpotipyFree calls every release an album; Spotify's own type says
+        # whether it is a single or a compilation
+        album["album_type"] = FREE_ALBUM_TYPES.get(
+            str(album.get("type") or "").upper(), album.get("album_type")
+        )
+
+        return album
+
+
 def _init_free_spotify_client(**kwargs) -> Any:
     """
     Initialize the default SpotipyFree client.
     """
 
-    return FreeSpotify(**kwargs)
+    return _FreeSpotifyClient(**kwargs)
 
 
 class SpotifyClient:

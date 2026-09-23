@@ -177,3 +177,96 @@ def test_init_uses_official_client_for_official_api_only_options(monkeypatch, ca
     assert calls[0][0] == "official"
     assert SpotifyClient._use_official_api is True
     assert "Using the official Spotify Web API because" in caplog.text
+
+
+DESKTOP_SEARCH = {
+    "data": {
+        "searchV2": {
+            "artists": {
+                "items": [
+                    {
+                        "data": {
+                            "uri": "spotify:artist:a1",
+                            "profile": {"name": "Gorillaz"},
+                        }
+                    },
+                    {"data": {"uri": "", "profile": {"name": "No uri"}}},
+                ]
+            },
+            "albumsV2": {
+                "items": [{"data": {"uri": "spotify:album:b2", "name": "Demon Days"}}]
+            },
+            "playlists": {
+                "items": [
+                    {
+                        "data": {
+                            "uri": "spotify:playlist:c3",
+                            "name": "This Is Gorillaz",
+                        }
+                    },
+                    {"data": {"uri": "spotify:user:x", "name": "Not a playlist"}},
+                ]
+            },
+        }
+    }
+}
+
+
+@pytest.mark.parametrize(
+    "search_type, expected",
+    [
+        ("artist", [("Gorillaz", "a1")]),
+        ("album", [("Demon Days", "b2")]),
+        ("playlist", [("This Is Gorillaz", "c3")]),
+    ],
+)
+def test_format_free_search_results(search_type, expected):
+    result = spotify_module.format_free_search_results(DESKTOP_SEARCH, search_type)
+
+    items = result[f"{search_type}s"]["items"]
+    assert [(item["name"], item["id"]) for item in items] == expected
+    assert all(item["type"] == search_type for item in items)
+
+
+def test_format_free_search_results_empty_response():
+    assert spotify_module.format_free_search_results({}, "artist") == {
+        "artists": {"items": []}
+    }
+
+
+def test_free_client_searches_artists(monkeypatch):
+    queries = []
+
+    class FakeSong:
+        def query_songs(self, query, limit=10, offset=0):
+            queries.append(query)
+            return DESKTOP_SEARCH
+
+    import spotapi
+
+    monkeypatch.setattr(spotapi, "Song", FakeSong)
+    client = object.__new__(spotify_module._FreeSpotifyClient)
+
+    result = client.search("artist: gorillaz", type="artist")
+
+    assert queries == ["gorillaz"]
+    assert result["artists"]["items"][0]["id"] == "a1"
+
+
+@pytest.mark.parametrize(
+    "raw_type, expected",
+    [
+        ("SINGLE", "single"),
+        ("EP", "single"),
+        ("ALBUM", "album"),
+        ("COMPILATION", "compilation"),
+    ],
+)
+def test_free_client_album_type(monkeypatch, raw_type, expected):
+    def fake_album(self, album_id, *args, **kwargs):
+        return {"name": "Ropes", "type": raw_type, "album_type": "album"}
+
+    monkeypatch.setattr(spotify_module.FreeSpotify, "album", fake_album)
+    client = object.__new__(spotify_module._FreeSpotifyClient)
+
+    assert client.album("id")["album_type"] == expected
