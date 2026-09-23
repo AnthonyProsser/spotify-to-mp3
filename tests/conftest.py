@@ -101,3 +101,27 @@ def clean_ansi_sequence(text):
         "",
         text,
     )
+
+
+def _drop_response_cookies(response):
+    """
+    Keep session cookies out of recorded responses
+    """
+
+    response["headers"].pop("Set-Cookie", None)
+    response["headers"].pop("set-cookie", None)
+    return response
+
+
+@pytest.fixture(scope="module")
+def vcr_config():
+    """
+    Keep access tokens and cookies out of recorded cassettes
+    """
+
+    return {
+        "filter_headers": ["authorization", "cookie", "client-token"],
+        "before_record_response": _drop_response_cookies,
+        # urllib3 2 doesn't decompress replayed bodies; store them decoded
+        "decode_compressed_response": True,
+    }
