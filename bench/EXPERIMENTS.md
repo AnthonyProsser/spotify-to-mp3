@@ -138,3 +138,12 @@ back: the English version fails the version check.
     English first.
 - Held-out check: 0.7% vs 2.0% and 0.6% on the tuning lists, so no sign of
   overfitting.
+- CI: `standard-checks.yml` (MyPy, Pylint 10/10, Black, Isort) passes. The
+  Pytest workflow (`tests.yml`) fails as it has on every commit of this
+  branch since it was created. Causes: Spotify, Genius and GitHub API calls,
+  config-path tests, YTMusic cassettes recorded before the German client, and
+  the 10-minute job timeout. Locally the same 12 tests fail before and after
+  this change (148 passed now vs 119, counting the new tests). On GitHub the
+  failures are the same tests except two Spotify API errors
+  (`test_get_search_results`, `test_get_simple_songs`). Those were reached
+  only because this run didn't time out, and both pass locally.
