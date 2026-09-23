@@ -202,6 +202,10 @@ def test_create_judge(monkeypatch):
     assert judge.client.model == "kev-latest"
     assert judge.threshold == 0.8
     assert judge.judge_all
+    assert judge.client.timeout == 60.0
+
+    monkeypatch.setenv("TYPESAFE_API_KEY", "key")
+    assert create_judge("jev").client.timeout == 15.0
 
 
 class FakeProvider(AudioProvider):
@@ -319,3 +323,63 @@ def test_no_rescue_when_judge_unsure(spanish_provider, fake_answers):
     spanish_provider.judge = MatchJudge(FakeClient(fake_answers))
 
     assert spanish_provider.search(SPANISH_SONG) is None
+
+
+def test_best_result_skips_unavailable_video(monkeypatch):
+    provider = FakeProvider()
+    gone = Result(**{**STUDIO.json, "result_id": "gone", "url": "gone", "views": None})
+    views = {LIVE.url: 5, COVER.url: 10}
+
+    def get_views(url):
+        if url not in views:
+            raise audio_base.AudioProviderError(f"YT-DLP download error - {url}")
+        return views[url]
+
+    monkeypatch.setattr(provider, "get_views", get_views)
+    no_views = {Result(**{**r.json, "views": None}): s for r, s in RESULTS.items()}
+    no_views[gone] = 95.0
+
+    best, _ = provider.get_best_result(no_views)
+    assert best.result_id not in ("gone", "studio")
+
+
+def test_best_result_with_equal_views_is_top_score():
+    provider = FakeProvider()
+    results = {Result(**{**r.json, "views": 100}): s for r, s in RESULTS.items()}
+
+    best, score = provider.get_best_result(results)
+    assert (best.result_id, score) == ("live", 90.0)
+
+
+class TwoPassProvider(AudioProvider):
+    SUPPORTS_ISRC = False
+    GET_RESULTS_OPTS = [{"filter": "songs"}, {"filter": "videos"}]
+
+    SONG_RESULT = Result(**{**STUDIO.json, "views": 10})
+    # A popular music video: scores a little lower but wins on views
+    VIDEO_RESULT = Result(
+        **{**COVER.json, "name": "Midnight City (Official Video)", "views": 10**6}
+    )
+
+    def get_results(self, search_term, **kwargs):
+        if kwargs["filter"] == "songs":
+            return [self.SONG_RESULT]
+        return [self.VIDEO_RESULT]
+
+
+@pytest.mark.parametrize("judge_all", [False, True])
+def test_declined_judge_keeps_spotdl_pick(monkeypatch, judge_all):
+    scores = {TwoPassProvider.SONG_RESULT: 85.0, TwoPassProvider.VIDEO_RESULT: 84.0}
+    monkeypatch.setattr(
+        audio_base,
+        "order_results",
+        lambda results, song, query: {r: scores[r] for r in results},
+    )
+    provider = TwoPassProvider()
+    assert provider.search(SONG) == TwoPassProvider.SONG_RESULT.url
+
+    client = FakeClient(answers("none", 0.9))
+    provider.judge = MatchJudge(client, judge_all=judge_all)
+
+    assert provider.search(SONG) == TwoPassProvider.SONG_RESULT.url
+    assert len(client.calls) == (1 if judge_all else 0)

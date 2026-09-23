@@ -59,7 +59,7 @@ spotdl download "https://open.spotify.com/playlist/..." --judge kev
 Options:
 
 - `--judge-threshold 0.7`: the minimum probability needed to use the judge's pick. Below it, spotDL's own pick is kept.
-- `--judge-all`: judge every song. By default, songs spotDL is already sure of (ISRC match, or a verified result scoring 80 or more) skip the judge.
+- `--judge-all`: judge every song. By default, songs spotDL is already sure of (ISRC match, or a verified result scoring 80 or more) skip the judge. With `--judge-all`, if the judge declines, the song gets the same pick spotDL would have made without the judge.
 - `--judge-url` / `--judge-model`: point to a different server or model.
 - `--judge-report path.csv`: where the report goes (default `judge_report.csv`). It has one row per judged song: spotDL's pick, the judge's pick and confidence, and the outcome (`agreed`, `overrode`, `rescued`, `low_confidence`, `rejected_all`, `not_original` or `judge_error`).
 
@@ -84,6 +84,8 @@ Kev was trained mostly on English data, so check its picks on other languages wi
 ```bash
 uv run python scripts/judge_benchmark.py <playlist-url> [<playlist-url> ...] --judge kev --out benchmark.csv
 ```
+
+It also records how long each search and judge call took (`search_seconds`, `judge_seconds`), and logs every question sent to the judge and its answers to `benchmark_requests.jsonl`. Songs that fail with network errors are retried three times and then skipped.
 
 Downloading from YouTube may break YouTube's Terms of Service. Use this for personal use only.
 

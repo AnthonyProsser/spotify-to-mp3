@@ -1,6 +1,7 @@
 import pytest
 
 from spotdl.providers.audio import YouTubeMusic
+from spotdl.providers.audio.ytmusic import parse_views
 from spotdl.types.song import Song
 
 
@@ -77,3 +78,62 @@ def test_ytm_get_results_retries_with_new_client(mocker):
     assert results[0].name == "Test Song"
     assert first_client.search.call_count == 1
     assert second_client.search.call_count == 1
+
+
+@pytest.mark.parametrize(
+    "text, require_word, expected",
+    [
+        ("968\xa0Mio.\xa0Wiedergaben", True, 968_000_000),
+        ("1,8\xa0Mrd.\xa0Wiedergaben", True, 1_800_000_000),
+        ("294.406\xa0Wiedergaben", True, 294_406),
+        ("12\xa0Tsd.\xa0Aufrufe", True, 12_000),
+        ("243\xa0Mio.", False, 243_000_000),
+        ("3,2\xa0Mio.", False, 3_200_000),
+        ("243\xa0Mio.", True, None),
+        ("Bad Bunny", False, None),
+        ("2Pac", True, None),
+        (None, False, None),
+    ],
+)
+def test_parse_views(text, require_word, expected):
+    assert parse_views(text, require_word=require_word) == expected
+
+
+def test_ytm_get_results_moves_play_count_to_views(mocker):
+    client = mocker.Mock()
+    client.search.return_value = [
+        {
+            "videoId": "video_0",
+            "resultType": "song",
+            "title": "DtMF",
+            "artists": [
+                {"name": "Bad Bunny", "id": "UCiY3z8HAGD6BlSNKVn2kSvQ"},
+                {"name": "968\xa0Mio.\xa0Wiedergaben", "id": None},
+            ],
+            "duration": "3:58",
+        },
+        {
+            "videoId": "video_1",
+            "resultType": "video",
+            "title": "Bad Bunny - DtMF (Letra)",
+            "artists": [{"name": "iPerol", "id": "UCFwS8sLuE4Du7VA_DDnhmeg"}],
+            "views": "243\xa0Mio.",
+            "duration": "4:01",
+        },
+        {
+            "videoId": "video_2",
+            "resultType": "song",
+            "title": "Only a play count",
+            "artists": [{"name": "5\xa0Wiedergaben", "id": None}],
+            "duration": "1:00",
+        },
+    ]
+    mocker.patch("spotdl.providers.audio.ytmusic.YTMusic", return_value=client)
+
+    results = YouTubeMusic().get_results("bad bunny dtmf")
+
+    assert len(results) == 2
+    assert results[0].artists == ("Bad Bunny",)
+    assert results[0].views == 968_000_000
+    assert results[1].artists == ("iPerol",)
+    assert results[1].views == 243_000_000

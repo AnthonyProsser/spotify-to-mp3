@@ -183,8 +183,10 @@ class AudioProvider:
 
         logger.debug("[%s] Searching for %s", song.song_id, search_query)
 
-        # With --judge-all, skip spotDL's early returns so every song is judged
+        # With --judge-all, skip spotDL's early returns so every song is judged,
+        # but remember what spotDL would have returned, to fall back to it
         judge_all = self.judge is not None and self.judge.judge_all
+        spotdl_pick: Optional[Tuple[Result, Optional[float]]] = None
 
         isrc_urls: List[str] = []
 
@@ -208,7 +210,7 @@ class AudioProvider:
                 song.isrc,
             )
 
-            if len(isrc_results) == 1 and isrc_results[0].verified and not judge_all:
+            if len(isrc_results) == 1 and isrc_results[0].verified:
                 # If we only have one verified result, return it
                 # What's the chance of it being wrong?
                 logger.debug(
@@ -217,7 +219,10 @@ class AudioProvider:
                     isrc_results[0].url,
                 )
 
-                return isrc_results[0].url
+                if not judge_all:
+                    return isrc_results[0].url
+
+                spotdl_pick = (isrc_results[0], None)
 
             if len(isrc_results) > 0:
                 sorted_isrc_results = order_results(
@@ -235,7 +240,7 @@ class AudioProvider:
                     len(best_isrc_results),
                 )
 
-                if len(best_isrc_results) > 0 and not judge_all:
+                if len(best_isrc_results) > 0 and spotdl_pick is None:
                     best_isrc = best_isrc_results[0]
                     if best_isrc[1] > 80.0:
                         logger.debug(
@@ -245,7 +250,10 @@ class AudioProvider:
                             best_isrc[1],
                         )
 
-                        return best_isrc[0].url
+                        if not judge_all:
+                            return best_isrc[0].url
+
+                        spotdl_pick = best_isrc
 
         results: Dict[Result, float] = {}
 
@@ -280,12 +288,15 @@ class AudioProvider:
                 None,
             )
 
-            if isrc_result and not judge_all:
+            if isrc_result and spotdl_pick is None:
                 logger.debug(
                     "[%s] Best ISRC result is %s", song.song_id, isrc_result.url
                 )
 
-                return isrc_result.url
+                if not judge_all:
+                    return isrc_result.url
+
+                spotdl_pick = (isrc_result, None)
 
             logger.debug(
                 "[%s] Have to filter results: %s", song.song_id, self.filter_results
@@ -314,7 +325,7 @@ class AudioProvider:
                     best_score,
                 )
 
-                if best_score >= 80 and best_result.verified and not judge_all:
+                if best_score >= 80 and best_result.verified and spotdl_pick is None:
                     logger.debug(
                         "[%s] Returning verified best result %s with score %s",
                         song.song_id,
@@ -322,42 +333,43 @@ class AudioProvider:
                         best_score,
                     )
 
-                    return best_result.url
+                    if not judge_all:
+                        return best_result.url
+
+                    spotdl_pick = (best_result, best_score)
 
                 # Update final results with new results
                 results.update(new_results)
 
-        # No matches found, the judge may still find one among the results
-        # spotDL filtered out (e.g. titles in another language or script)
-        if not results:
-            rescued = None
-            if self.judge is not None and all_results:
-                rescued = self.judge.choose(song, {}, None, None, all_results)
+        # spotDL's own pick, or None if it found no match
+        final_result: Optional[Result] = None
+        final_score: Optional[float] = None
+        if spotdl_pick is not None:
+            final_result, final_score = spotdl_pick
+        elif results:
+            final_result, final_score = self.get_best_result(results)
 
-            if rescued is None:
-                logger.debug("[%s] No results found", song.song_id)
-                return None
-
-            logger.debug("[%s] Judge rescued %s", song.song_id, rescued.url)
-            return rescued.url
-
-        # get the result with highest score
-        best_result, best_score = self.get_best_result(results)
-
+        # The judge may replace spotDL's pick, or find a match when spotDL
+        # found none among the results its filters dropped (e.g. titles in
+        # another language or script)
         if self.judge is not None:
-            best_result = (
-                self.judge.choose(song, results, best_result, best_score, all_results)
-                or best_result
+            final_result = (
+                self.judge.choose(song, results, final_result, final_score, all_results)
+                or final_result
             )
+
+        if final_result is None:
+            logger.debug("[%s] No results found", song.song_id)
+            return None
 
         logger.debug(
             "[%s] Returning best result %s with score %s",
             song.song_id,
-            best_result.url,
-            best_score,
+            final_result.url,
+            final_score,
         )
 
-        return best_result.url
+        return final_result.url
 
     def get_best_result(self, results: Dict[Result, float]) -> Tuple[Result, float]:
         """
@@ -389,27 +401,38 @@ class AudioProvider:
         # return the one with the highest score
         # and most views
         if len(best_results) > 1:
+            available: List[Tuple[Result, float]] = []
             views: List[int] = []
-            for best_result in best_results:
-                if best_result[0].views:
-                    views.append(best_result[0].views)
+            for result, score in best_results:
+                if result.views:
+                    result_views = result.views
                 else:
-                    views.append(self.get_views(best_result[0].url))
+                    # Blocked, age restricted or unreleased videos can't be
+                    # downloaded, and shouldn't fail the whole search
+                    try:
+                        result_views = self.get_views(result.url)
+                    except AudioProviderError as exception:
+                        logger.debug("Skipping unavailable result: %s", exception)
+                        continue
+
+                available.append((result, score))
+                views.append(result_views)
+
+            if not available:
+                return best_results[0][0], best_results[0][1]
 
             highest_views = max(views)
             lowest_views = min(views)
 
             if highest_views in (0, lowest_views):
-                return best_result[0], best_result[1]
+                return available[0]
 
             weighted_results: List[Tuple[Result, float]] = []
-            for index, best_result in enumerate(best_results):
-                result_views = views[index]
+            for (result, score), result_views in zip(available, views):
                 views_score = (
                     (result_views - lowest_views) / (highest_views - lowest_views)
                 ) * 15
-                score = min(best_result[1] + views_score, 100)
-                weighted_results.append((best_result[0], score))
+                weighted_results.append((result, min(score + views_score, 100)))
 
             # Now we return the result with the highest score
             return max(weighted_results, key=lambda x: x[1])

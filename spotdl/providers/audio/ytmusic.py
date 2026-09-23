@@ -3,7 +3,8 @@ YTMusic module for downloading and searching songs.
 """
 
 import logging
-from typing import Any, Dict, List
+import re
+from typing import Any, Dict, List, Optional
 
 from ytmusicapi import YTMusic
 
@@ -14,6 +15,41 @@ from spotdl.utils.formatter import parse_duration
 __all__ = ["YouTubeMusic"]
 
 logger = logging.getLogger(__name__)
+
+# Results are in German (see `_create_client`), so play counts look like
+# "968 Mio. Wiedergaben" or "294.406 Aufrufe"
+VIEWS_REGEX = re.compile(
+    r"^(?P<number>\d[\d.,]*)\s*(?P<unit>Tsd\.|Mio\.|Mrd\.)?\s*(?P<word>Wiedergaben|Aufrufe)?$"
+)
+VIEWS_UNITS = {"Tsd.": 1_000, "Mio.": 1_000_000, "Mrd.": 1_000_000_000}
+
+
+def parse_views(text: Optional[str], require_word: bool = False) -> Optional[int]:
+    """
+    Parse a German YouTube Music view or play count.
+
+    ### Arguments
+    - text: The count, e.g. "1,8 Mrd. Wiedergaben", "243 Mio." or "294.406".
+    - require_word: Only match counts ending in "Wiedergaben" or "Aufrufe".
+
+    ### Returns
+    - The count, or None if the text isn't a count.
+    """
+
+    if not text:
+        return None
+
+    match = VIEWS_REGEX.match(text.replace("\xa0", " ").strip())
+    if match is None or (require_word and not match.group("word")):
+        return None
+
+    number, unit = match.group("number"), match.group("unit")
+    if unit:
+        # "1,8 Mrd." uses a decimal comma
+        return int(float(number.replace(".", "").replace(",", ".")) * VIEWS_UNITS[unit])
+
+    # "294.406" uses dots as thousands separators
+    return int(number.replace(".", "").replace(",", ""))
 
 
 class YouTubeMusic(AudioProvider):
@@ -75,11 +111,25 @@ class YouTubeMusic(AudioProvider):
             # Simplify results
             results = []
             for result in search_results:
-                if (
-                    result is None
-                    or result.get("videoId") is None
-                    or result.get("artists") in [[], None]
-                ):
+                if result is None or result.get("videoId") is None:
+                    continue
+
+                # Song results list the play count as an extra artist
+                # without an id, e.g. "968 Mio. Wiedergaben"
+                views = parse_views(result.get("views"))
+                artists = []
+                for artist in result.get("artists") or []:
+                    plays = (
+                        parse_views(artist.get("name"), require_word=True)
+                        if artist.get("id") is None
+                        else None
+                    )
+                    if plays is None:
+                        artists.append(artist)
+                    elif views is None:
+                        views = plays
+
+                if not artists:
                     continue
 
                 results.append(
@@ -92,8 +142,8 @@ class YouTubeMusic(AudioProvider):
                         verified=result.get("resultType") == "song",
                         name=result["title"],
                         result_id=result["videoId"],
-                        author=result["artists"][0]["name"],
-                        artists=tuple(map(lambda a: a["name"], result["artists"])),
+                        author=artists[0]["name"],
+                        artists=tuple(artist["name"] for artist in artists),
                         duration=parse_duration(result.get("duration")),
                         isrc_search=is_isrc_result,
                         search_query=search_term,
@@ -103,6 +153,7 @@ class YouTubeMusic(AudioProvider):
                             if result.get("album")
                             else None
                         ),
+                        views=views,
                     )
                 )
 

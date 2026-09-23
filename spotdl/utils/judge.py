@@ -467,6 +467,9 @@ def create_judge(
         model=model or default_model,
         api_key=api_key,
         cloudflare=cloudflare,
+        # A local model can take several seconds when the machine is busy
+        # or the model was swapped out
+        timeout=60.0 if backend == "kev" else 15.0,
     )
 
     return MatchJudge(

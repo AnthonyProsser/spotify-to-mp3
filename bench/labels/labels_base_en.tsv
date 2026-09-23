@@ -1,0 +1,27 @@
+song	kind	correct	note
+Michael Jackson - Bad	DIFF	spotdl	judge=Shortened Version video 260s vs 247s
+Led Zeppelin - Black Dog - Remaster	DIFF	both	judge=fan re-upload of same remaster 296s
+Queen - Bohemian Rhapsody	DIFF	spotdl	judge=official video remastered 359s vs 355s (video edit)
+Queen - Crazy Little Thing Called Love - Remastered 2011	DIFF	spotdl	judge=official video 175s vs 163s
+Journey - Don't Stop Believin'	DIFF	both	spotdl=studio recording on compilation album 249s; judge=7clouds lyrics upload 248s
+Aerosmith - Dream On	DIFF	both	judge=Aerosmith '(Audio)' 268s vs 266s
+Metallica - Enter Sandman (Remastered)	DIFF	both	judge=RockHype re-upload 332s; which master (orig/remaster) can't be told from metadata
+Jerry Lee Lewis - Great Balls of Fire	DIFF	spotdl	judge=UPbeat Music Lessons video 116s vs 111s
+Judas Priest - Hell Bent for Leather	DIFF	both	judge=lyrics upload 158s vs 160s
+Van Halen - Hot for Teacher - 2015 Remaster	DIFF	both	two URLs for identical official track
+The Clash - Should I Stay or Should I Go - Remastered	DIFF	both	judge=7clouds lyrics upload 189s
+Deep Purple - Smoke on the Water	DIFF	both	judge=lyrics upload 342s
+Queen - Somebody To Love - Remastered 2011	DIFF	spotdl	judge=fan upload 293s vs 296s, unsure if same master -> judge counted wrong? UNSURE
+MC Hammer - U Can't Touch This	DIFF	both	judge=HQ fan re-upload 256s
+Survivor - Eye of the Tiger	SAME	both	official HD video, 245s = Spotify duration
+AC/DC - What Do You Do for Money Honey	SAME	both	official
+Deep Purple - Maybe I'm a Leo	SAME	both	official
+Guns N' Roses - Knockin' On Heaven's Door	SAME	both	official
+Twisted Sister - We're Not Gonna Take It	SAME	both	official
+George Thorogood & The Destroyers - Bad To The Bone	SAME	both	official
+Scorpions - Rock You Like A Hurricane	SAME	both	official
+AC/DC - Have a Drink on Me	SAME	both	official
+Def Leppard - Pour Some Sugar On Me	SAME	both	official
+AC/DC - Thunderstruck	SAME	both	official
+Van Halen - Love Walks In	SAME	both	official
+AC/DC - You Shook Me All Night Long	SAME	both	official

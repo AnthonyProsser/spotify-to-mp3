@@ -13,12 +13,15 @@ Usage:
 
 import argparse
 import csv
+import json
 import time
+from typing import Dict, List
 
 from spotdl.providers.audio import YouTubeMusic
+from spotdl.providers.audio.base import AudioProvider
 from spotdl.utils.config import DEFAULT_CONFIG
 from spotdl.utils.judge import JUDGE_BACKENDS, create_judge
-from spotdl.utils.search import get_simple_songs
+from spotdl.utils.search import get_simple_songs, reinit_song
 from spotdl.utils.spotify import SpotifyClient
 
 
@@ -41,6 +44,17 @@ def main() -> None:
         client_secret=DEFAULT_CONFIG["client_secret"],
     )
 
+    # Both searches look up the same videos' view counts; do it once
+    view_cache: Dict[str, int] = {}
+    get_views = AudioProvider.get_views
+
+    def cached_get_views(provider, url):
+        if url not in view_cache:
+            view_cache[url] = get_views(provider, url)
+        return view_cache[url]
+
+    AudioProvider.get_views = cached_get_views  # type: ignore
+
     songs = get_simple_songs(args.urls)
     print(f"Loaded {len(songs)} songs")
 
@@ -55,6 +69,38 @@ def main() -> None:
         report_path=args.out.replace(".csv", "_judge.csv"),
     )
 
+    # The first request to a local server loads the model; keep it out of
+    # the latency numbers
+    judged.judge.client.system_one(  # type: ignore
+        "warm up", {"q": {"type": "noul", "instructions": "Is this a test?"}}
+    )
+
+    # Time the judge's model calls on their own, without the YouTube search
+    judge_times: List[float] = []
+    client = judged.judge.client  # type: ignore
+    system_one = client.system_one
+
+    # Log every judge request and answer, to check what the judge saw
+    requests_log = open(  # pylint: disable=consider-using-with
+        args.out.replace(".csv", "_requests.jsonl"), "w", encoding="utf-8"
+    )
+
+    def timed_system_one(state, questions):
+        start = time.monotonic()
+        answers = None
+        try:
+            answers = system_one(state, questions)
+            return answers
+        finally:
+            judge_times.append(time.monotonic() - start)
+            requests_log.write(
+                json.dumps({"state": state, "answers": answers}, ensure_ascii=False)
+                + "\n"
+            )
+            requests_log.flush()
+
+    client.system_one = timed_system_one
+
     fields = [
         "list",
         "song",
@@ -62,6 +108,7 @@ def main() -> None:
         "spotdl_url",
         "judge_url",
         "same",
+        "search_seconds",
         "judge_seconds",
         "correct",
     ]
@@ -70,10 +117,28 @@ def main() -> None:
         writer.writeheader()
 
         for index, song in enumerate(songs, 1):
-            spotdl_url = plain.search(song)
-            start = time.monotonic()
-            judge_url = judged.search(song)
-            seconds = time.monotonic() - start
+            # Fill in the album and other fields playlist loading leaves out,
+            # as the downloader does before searching
+            try:
+                song = reinit_song(song)
+            except Exception as exception:  # pylint: disable=broad-except
+                print(f"Couldn't reinitialize {song.display_name}: {exception!r}")
+
+            # Retry network errors so one dropped connection doesn't end the run
+            for attempt in range(3):
+                try:
+                    spotdl_url = plain.search(song)
+                    judge_times.clear()
+                    start = time.monotonic()
+                    judge_url = judged.search(song)
+                    seconds = time.monotonic() - start
+                    break
+                except Exception as exception:  # pylint: disable=broad-except
+                    print(f"Error on {song.display_name}: {exception!r}")
+                    time.sleep(10 * (attempt + 1))
+            else:
+                print(f"Skipping {song.display_name} after 3 errors")
+                continue
 
             writer.writerow(
                 {
@@ -83,7 +148,8 @@ def main() -> None:
                     "spotdl_url": spotdl_url or "",
                     "judge_url": judge_url or "",
                     "same": spotdl_url == judge_url,
-                    "judge_seconds": round(seconds, 2),
+                    "search_seconds": round(seconds, 2),
+                    "judge_seconds": round(sum(judge_times), 3) if judge_times else "",
                     "correct": "",
                 }
             )
